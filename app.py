@@ -1,40 +1,93 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
-import matplotlib.pyplot as plt
-from pandas_datareader import data as web
+from prophet import Prophet
+from prophet.plot import plot_plotly
+from plotly import graph_objs as go
+from datetime import date
 
-# Function to fetch stock data
-def fetch_stock_data(stock, start, end):
-    df = web.DataReader(stock, data_source='yahoo', start=start, end=end)
-    return df
+# Set page config
+st.set_page_config(layout="wide")
 
-# Function to calculate SMAs
-def calculate_sma(data, window):
-    return data['Close'].rolling(window=window).mean()
+# Define global variables
+START = "2015-01-01"
+TODAY = date.today().strftime("%Y-%m-%d")
 
-# Streamlit app layout
-st.title('Investment Strategy Application')
+# Function to calculate tax (placeholder logic)
+def calculate_tax(income):
+    # Implement tax calculation logic based on Australian tax brackets
+    # ...
+    return tax_payable
 
-# User input for stock symbol
-stock = st.sidebar.text_input('Enter Stock Symbol', 'AAPL')
+# Function to load stock data with new caching mechanism
+@st.experimental_memo
+def load_data(ticker):
+    try:
+        data = yf.download(ticker, START, TODAY)
+        data.reset_index(inplace=True)
+        return data
+    except Exception as e:
+        st.error(f"Failed to download data for {ticker}: {e}")
+        return pd.DataFrame()  # Return an empty DataFrame in case of an error
 
-# Date input for range
-start_date = st.sidebar.date_input('Start Date', pd.to_datetime('2020-01-01'))
-end_date = st.sidebar.date_input('End Date', pd.to_datetime('2021-01-01'))
+# Function to plot raw stock data
+def plot_raw_data(data):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data["Date"], y=data["Open"], name="stock_open"))
+    fig.add_trace(go.Scatter(x=data["Date"], y=data["Close"], name="stock_close"))
+    fig.layout.update(title_text="Time Series Data with Rangeslider", xaxis_rangeslider_visible=True)
+    st.plotly_chart(fig)
 
-# Display stock data
-if st.button('Show Data'):
-    stock_data = fetch_stock_data(stock, start_date, end_date)
-    short_sma = calculate_sma(stock_data, 40)
-    long_sma = calculate_sma(stock_data, 100)
+# Tax Calculation Page
+def tax_calculation_page():
+    st.title("Tax Calculation")
+    income = st.number_input("Enter your annual income", min_value=0)
+    tax_payable = calculate_tax(income)
+    st.write(f"Your estimated tax payable is: ${tax_payable}")
 
-    # Plotting
-    fig, ax = plt.subplots()
-    ax.plot(stock_data['Close'], label='Close Price')
-    ax.plot(short_sma, label='40-Day SMA')
-    ax.plot(long_sma, label='100-Day SMA')
-    ax.set_title(f'{stock} Stock Price and SMA Crossover')
-    ax.legend()
+# Stock Analysis and Forecasting Page
+def stock_forecast_page():
+    st.title("Stock Forecast")
+    selected_stock = st.selectbox("Select dataset for prediction", ("AAPL", "GOOG", "MSFT", "AMZN"))  # Example stocks
+    n_years = st.slider("Years of prediction:", 1, 5)
+    period = n_years * 365
 
-    st.pyplot(fig)
+    data = load_data(selected_stock)
+
+    if data.empty or data.shape[0] < 2:
+        st.error("Not enough data to perform forecasting.")
+        return
+
+    # Prepare data for forecasting
+    df_train = data[["Date", "Close"]]
+    df_train = df_train.rename(columns={"Date": "ds", "Close": "y"})
+
+    m = Prophet()
+    m.fit(df_train)
+    future = m.make_future_dataframe(periods=period)
+    forecast = m.predict(future)
+
+    st.subheader("Forecast Data")
+    st.write(forecast.tail())
+
+    plot_raw_data(data)
+
+    st.write(f"Forecast plot for {n_years} years")
+    fig1 = plot_plotly(m, forecast)
+    st.plotly_chart(fig1)
+
+    st.write("Forecast components")
+    fig2 = m.plot_components(forecast)
+    st.write(fig2)
+
+# Define page navigation
+page_names_to_funcs = {
+    "Tax Calculation": tax_calculation_page,
+    "Stock Forecast": stock_forecast_page,
+    # Additional pages can be added here
+}
+
+# Sidebar for navigation
+selected_page = st.sidebar.selectbox("Select a page", list(page_names_to_funcs.keys()))
+page_names_to_funcs[selected_page]()
 
